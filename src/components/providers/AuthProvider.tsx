@@ -11,13 +11,11 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const router = useRouter()
 
   useEffect(() => {
-    // Load user on mount
     getAuthUser().then((user) => {
       setUser(user)
       setLoading(false)
     })
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
@@ -25,8 +23,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           setUser(user)
           setLoading(false)
 
-          // Route based on role
           const role = user?.role?.role_type
+          const hasSchool = !!user?.profile?.school_id
+
+          // No school yet — send to onboarding
+          if (!hasSchool) {
+            router.push('/onboarding')
+            return
+          }
+
+          // Has school — route by role
           if (role === 'super_admin') router.push('/super-admin')
           else if (role === 'school_admin') router.push('/school-admin')
           else if (role === 'course_rep') router.push('/control-room')
