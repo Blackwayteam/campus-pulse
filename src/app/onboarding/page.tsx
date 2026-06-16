@@ -43,19 +43,19 @@ export default function OnboardingPage() {
     setLoading(true)
     setError('')
 
-    // Link user to school
+    // Step 1 — update user's school_id
     const { error: userErr } = await supabase
       .from('users')
       .update({ school_id: school.id })
       .eq('id', user.id)
 
     if (userErr) {
-      setError('Failed to join school. Try again.')
+      setError(`Step 1 failed: ${userErr.message}`)
       setLoading(false)
       return
     }
 
-    // Create student role
+    // Step 2 — create student role
     const { error: roleErr } = await supabase
       .from('roles')
       .insert({
@@ -64,13 +64,13 @@ export default function OnboardingPage() {
         role_type: 'student',
       })
 
-    if (roleErr && !roleErr.message.includes('duplicate')) {
-      setError('Failed to set role. Try again.')
+    if (roleErr) {
+      setError(`Step 2 failed: ${roleErr.message}`)
       setLoading(false)
       return
     }
 
-    // Reload auth user with new school and role
+    // Step 3 — reload user
     const updatedUser = await getAuthUser()
     setUser(updatedUser)
 
