@@ -1,22 +1,49 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { useAuthStore } from '@/store/auth'
-import { getAuthUser } from '@/lib/auth'
 import { motion } from 'framer-motion'
 
 export default function OnboardingPage() {
-  const { user, setUser } = useAuthStore()
   const router = useRouter()
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userName, setUserName] = useState<string>('')
   const [slug, setSlug] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [school, setSchool] = useState<any>(null)
-  const [step, setStep] = useState<'search' | 'confirm'>('search')
+  const [step, setStep] = useState<'search' | 'confirm' | 'done'>('search')
+
+  // Get the current user directly from Supabase — no store needed
+  useEffect(() => {
+    async function getUser() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        router.push('/login')
+        return
+      }
+      setUserId(user.id)
+
+      const { data: profile } = await supabase
+        .from('users')
+        .select('full_name, school_id')
+        .eq('id', user.id)
+        .single()
+
+      if (profile?.school_id) {
+        // Already has a school — go to campus
+        router.push('/campus')
+        return
+      }
+
+      setUserName(profile?.full_name ?? '')
+    }
+    getUser()
+  }, [])
 
   async function findSchool() {
+    if (!slug.trim()) return
     setLoading(true)
     setError('')
 
@@ -39,42 +66,64 @@ export default function OnboardingPage() {
   }
 
   async function joinSchool() {
-    if (!school || !user?.id) return
+    if (!school || !userId) {
+      setError('Session expired. Please refresh the page.')
+      return
+    }
+
     setLoading(true)
     setError('')
 
-    // Step 1 — update user's school_id
-    const { error: userErr } = await supabase
+    // Update user school_id
+    const { error: e1 } = await supabase
       .from('users')
       .update({ school_id: school.id })
-      .eq('id', user.id)
+      .eq('id', userId)
 
-    if (userErr) {
-      setError(`Step 1 failed: ${userErr.message}`)
+    if (e1) {
+      setError(`Could not join: ${e1.message}`)
       setLoading(false)
       return
     }
 
-    // Step 2 — create student role
-    const { error: roleErr } = await supabase
+    // Insert student role
+    const { error: e2 } = await supabase
       .from('roles')
       .insert({
         school_id: school.id,
-        user_id: user.id,
+        user_id: userId,
         role_type: 'student',
       })
 
-    if (roleErr) {
-      setError(`Step 2 failed: ${roleErr.message}`)
+    if (e2 && !e2.message.includes('duplicate')) {
+      setError(`Could not set role: ${e2.message}`)
       setLoading(false)
       return
     }
 
-    // Step 3 — reload user
-    const updatedUser = await getAuthUser()
-    setUser(updatedUser)
+    setStep('done')
 
-    router.push('/campus')
+    // Small delay so user sees the success screen
+    setTimeout(() => {
+      router.push('/campus')
+    }, 1500)
+  }
+
+  // DONE SCREEN
+  if (step === 'done') {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center"
+        >
+          <div className="text-7xl mb-4">🔥</div>
+          <h1 className="text-white text-3xl font-black mb-2">You're In</h1>
+          <p className="text-orange-400 font-medium">Loading your campus...</p>
+        </motion.div>
+      </div>
+    )
   }
 
   return (
@@ -94,10 +143,11 @@ export default function OnboardingPage() {
             CAMPUS PULSE
           </h1>
           <p className="text-orange-400 mt-1 text-sm font-medium">
-            Join your campus
+            {userName ? `Welcome, ${userName}` : 'Join your campus'}
           </p>
         </div>
 
+        {/* SEARCH STEP */}
         {step === 'search' && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -108,7 +158,7 @@ export default function OnboardingPage() {
               Find Your School
             </h2>
             <p className="text-zinc-500 text-sm mb-6">
-              Enter your school's Campus Pulse name to join
+              Enter your school's Campus Pulse ID to join
             </p>
 
             {error && (
@@ -120,32 +170,33 @@ export default function OnboardingPage() {
             <div className="space-y-4">
               <div>
                 <label className="text-zinc-400 text-sm mb-1 block">
-                  School name
+                  School ID
                 </label>
                 <input
                   type="text"
                   value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
+                  onChange={(e) => setSlug(e.target.value.toLowerCase())}
                   onKeyDown={(e) => e.key === 'Enter' && findSchool()}
-                  placeholder="e.g. knust, ucc, upsa"
-                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500 transition-colors lowercase"
+                  placeholder="e.g. knust, ucc, demo-university"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500 transition-colors"
                 />
                 <p className="text-zinc-600 text-xs mt-1 px-1">
-                  Ask your course rep or school admin for the exact name
+                  Ask your course rep or school admin for the exact ID
                 </p>
               </div>
 
               <button
                 onClick={findSchool}
-                disabled={loading || !slug}
+                disabled={loading || !slug.trim()}
                 className="w-full bg-orange-500 hover:bg-orange-400 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl py-3 text-sm transition-colors"
               >
-                {loading ? 'Searching...' : 'Find My School'}
+                {loading ? 'Searching...' : 'Find My School 🔍'}
               </button>
             </div>
           </motion.div>
         )}
 
+        {/* CONFIRM STEP */}
         {step === 'confirm' && school && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -157,14 +208,11 @@ export default function OnboardingPage() {
             </h2>
 
             {/* School card */}
-            <div
-              className="rounded-2xl p-5 mb-6 border border-zinc-700 text-center"
-              style={{ backgroundColor: (school.school_color ?? '#FF6B35') + '22' }}
-            >
+            <div className="rounded-2xl p-6 mb-6 border border-zinc-700 bg-zinc-800 text-center">
               <div className="text-5xl mb-3">🏫</div>
               <h3 className="text-white text-2xl font-black">{school.name}</h3>
-              <p className="text-zinc-400 text-sm mt-1">/{school.slug}</p>
-              <div className="flex items-center justify-center gap-2 mt-3">
+              <p className="text-zinc-500 text-sm mt-1">/{school.slug}</p>
+              <div className="mt-3">
                 <span className={`text-xs px-3 py-1 rounded-full font-bold ${
                   school.plan_status === 'premium'
                     ? 'bg-orange-500/20 text-orange-400'
@@ -187,26 +235,28 @@ export default function OnboardingPage() {
                   setStep('search')
                   setSchool(null)
                   setError('')
+                  setSlug('')
                 }}
-                className="flex-1 bg-zinc-800 text-zinc-400 rounded-xl py-3 text-sm font-bold"
+                className="flex-1 bg-zinc-800 text-zinc-400 hover:text-white rounded-xl py-3 text-sm font-bold transition-colors"
               >
                 Not mine
               </button>
               <button
                 onClick={joinSchool}
-                disabled={loading}
+                disabled={loading || !userId}
                 className="flex-1 bg-orange-500 hover:bg-orange-400 disabled:opacity-40 text-white font-bold rounded-xl py-3 text-sm transition-colors"
               >
                 {loading ? 'Joining...' : '🔥 Join Campus'}
               </button>
             </div>
+
+            {!userId && (
+              <p className="text-zinc-600 text-xs text-center mt-3">
+                Loading your session...
+              </p>
+            )}
           </motion.div>
         )}
-
-        {/* Welcome message */}
-        <p className="text-zinc-600 text-xs text-center mt-6">
-          Welcome, {user?.profile?.full_name}. Your campus is waiting.
-        </p>
 
       </div>
     </div>
