@@ -16,12 +16,16 @@ export default function SchoolAdminPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [classes, setClasses] = useState<Class[]>([])
   const [toggles, setToggles] = useState<any>(null)
+  const [members, setMembers] = useState<any[]>([])
+  const [memberRoles, setMemberRoles] = useState<any[]>([])
+  const [assignments, setAssignments] = useState<any[]>([])
   const [dataLoading, setDataLoading] = useState(true)
 
   // Modal states
   const [showAddBuilding, setShowAddBuilding] = useState(false)
   const [showAddDept, setShowAddDept] = useState(false)
   const [showAddClass, setShowAddClass] = useState(false)
+  const [showAssignRep, setShowAssignRep] = useState(false)
 
   // Form states
   const [buildingName, setBuildingName] = useState('')
@@ -35,6 +39,14 @@ export default function SchoolAdminPage() {
   const [classBuilding, setClassBuilding] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // Rep assignment form
+  const [assignClassId, setAssignClassId] = useState('')
+  const [assignStudentId, setAssignStudentId] = useState('')
+  const [assignHeroTitle, setAssignHeroTitle] = useState('')
+  const [memberSearch, setMemberSearch] = useState('')
+  const [savingRep, setSavingRep] = useState(false)
+  const [repError, setRepError] = useState('')
+
   useEffect(() => {
     if (!loading && !user) router.push('/login')
   }, [user, loading])
@@ -47,17 +59,23 @@ export default function SchoolAdminPage() {
     setDataLoading(true)
     const schoolId = user?.school?.id
 
-    const [b, d, c, t] = await Promise.all([
+    const [b, d, c, t, m, mr, ca] = await Promise.all([
       supabase.from('buildings').select('*').eq('school_id', schoolId).order('created_at'),
       supabase.from('departments').select('*').eq('school_id', schoolId).order('name'),
       supabase.from('classes').select('*').eq('school_id', schoolId).order('code'),
       supabase.from('feature_toggles').select('*').eq('school_id', schoolId).single(),
+      supabase.from('users').select('id, full_name, phone').eq('school_id', schoolId).order('full_name'),
+      supabase.from('roles').select('user_id, role_type, hero_title').eq('school_id', schoolId),
+      supabase.from('class_assignments').select('id, user_id, class_id').eq('school_id', schoolId),
     ])
 
     setBuildings(b.data ?? [])
     setDepartments(d.data ?? [])
     setClasses(c.data ?? [])
     setToggles(t.data ?? null)
+    setMembers(m.data ?? [])
+    setMemberRoles(mr.data ?? [])
+    setAssignments(ca.data ?? [])
     setDataLoading(false)
   }
 
@@ -101,7 +119,6 @@ export default function SchoolAdminPage() {
     setSaving(true)
     const schoolId = user?.school?.id
 
-    // Auto-create a room in the selected building
     let roomId = null
     if (classBuilding) {
       const { data: room } = await supabase.from('rooms').insert({
@@ -160,6 +177,111 @@ export default function SchoolAdminPage() {
       .from('feature_toggles')
       .update({ [key]: value })
       .eq('school_id', user?.school?.id)
+  }
+
+  // ── REP ASSIGNMENT ─────────────────────────────────────────
+
+  function roleOf(userId: string) {
+    return memberRoles.find((r) => r.user_id === userId)?.role_type ?? 'student'
+  }
+
+  function heroTitleOf(userId: string) {
+    return memberRoles.find((r) => r.user_id === userId)?.hero_title ?? null
+  }
+
+  function repsForClass(classId: string) {
+    return assignments
+      .filter((a) => a.class_id === classId)
+      .map((a) => ({ ...a, member: members.find((m) => m.id === a.user_id) }))
+      .filter((a) => a.member)
+  }
+
+  async function assignRep() {
+    if (!assignClassId || !assignStudentId) return
+    setSavingRep(true)
+    setRepError('')
+
+    const existing = memberRoles.find((r) => r.user_id === assignStudentId)
+
+    if (existing) {
+      if (existing.role_type === 'student') {
+        const { error } = await supabase
+          .from('roles')
+          .update({
+            role_type: 'course_rep',
+            hero_title: assignHeroTitle || existing.hero_title,
+          })
+          .eq('user_id', assignStudentId)
+          .eq('school_id', user?.school?.id)
+
+        if (error) {
+          setRepError(error.message)
+          setSavingRep(false)
+          return
+        }
+      } else if (assignHeroTitle) {
+        await supabase
+          .from('roles')
+          .update({ hero_title: assignHeroTitle })
+          .eq('user_id', assignStudentId)
+          .eq('school_id', user?.school?.id)
+      }
+    } else {
+      const { error } = await supabase.from('roles').insert({
+        school_id: user?.school?.id,
+        user_id: assignStudentId,
+        role_type: 'course_rep',
+        hero_title: assignHeroTitle || null,
+      })
+
+      if (error) {
+        setRepError(error.message)
+        setSavingRep(false)
+        return
+      }
+    }
+
+    const { error: assignError } = await supabase.from('class_assignments').insert({
+      school_id: user?.school?.id,
+      class_id: assignClassId,
+      user_id: assignStudentId,
+    })
+
+    if (assignError && assignError.code !== '23505') {
+      setRepError(assignError.message)
+      setSavingRep(false)
+      return
+    }
+
+    setShowAssignRep(false)
+    setAssignClassId('')
+    setAssignStudentId('')
+    setAssignHeroTitle('')
+    setMemberSearch('')
+    setSavingRep(false)
+    loadData()
+  }
+
+  async function removeRep(assignmentId: string, userId: string) {
+    if (!confirm('Remove this rep from this class?')) return
+
+    await supabase.from('class_assignments').delete().eq('id', assignmentId)
+
+    const { data: remaining } = await supabase
+      .from('class_assignments')
+      .select('id')
+      .eq('user_id', userId)
+
+    if (!remaining || remaining.length === 0) {
+      await supabase
+        .from('roles')
+        .update({ role_type: 'student' })
+        .eq('user_id', userId)
+        .eq('school_id', user?.school?.id)
+        .eq('role_type', 'course_rep')
+    }
+
+    loadData()
   }
 
   // ── HELPERS ────────────────────────────────────────────────
@@ -236,7 +358,7 @@ export default function SchoolAdminPage() {
                 { label: 'Buildings', value: buildings.length, icon: '🏢' },
                 { label: 'Departments', value: departments.length, icon: '📚' },
                 { label: 'Classes', value: classes.length, icon: '📖' },
-                { label: 'Active Now', value: buildings.filter(b => b.status !== 'normal').length, icon: '🔥' },
+                { label: 'Course Reps', value: memberRoles.filter(r => r.role_type === 'course_rep').length, icon: '🦸' },
               ].map((stat) => (
                 <div key={stat.label} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
                   <div className="text-2xl mb-1">{stat.icon}</div>
@@ -538,8 +660,6 @@ export default function SchoolAdminPage() {
                         <option key={d.id} value={d.id}>{d.name}</option>
                       ))}
                     </select>
-
-                    {/* Building selector — this is what links class to map */}
                     <select
                       value={classBuilding}
                       onChange={(e) => setClassBuilding(e.target.value)}
@@ -551,7 +671,7 @@ export default function SchoolAdminPage() {
                       ))}
                     </select>
                     <p className="text-zinc-600 text-xs -mt-1 px-1">
-                      This links the class to a building so it burns on the map when cancelled
+                      Links the class to a building so it burns on the map when cancelled
                     </p>
 
                     <div className="flex gap-3 pt-1">
@@ -576,17 +696,185 @@ export default function SchoolAdminPage() {
           </div>
         )}
 
-        {/* REPS */}
+        {/* REPS — NEW */}
         {activeTab === 'reps' && (
           <div className="space-y-3">
-            <h2 className="font-bold text-white mb-2">Course Reps</h2>
-            <div className="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl p-10 text-center">
-              <div className="text-4xl mb-3">👤</div>
-              <p className="text-zinc-400 font-medium">Coming next</p>
-              <p className="text-zinc-600 text-sm mt-1">
-                Add buildings, departments and classes first
-              </p>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="font-bold text-white">Course Reps</h2>
+              <button
+                onClick={() => setShowAssignRep(true)}
+                disabled={classes.length === 0}
+                className="bg-orange-500 hover:bg-orange-400 disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-xl"
+              >
+                + Assign Rep
+              </button>
             </div>
+
+            {classes.length === 0 ? (
+              <div className="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl p-10 text-center">
+                <div className="text-4xl mb-3">📖</div>
+                <p className="text-zinc-400 font-medium">Add a class first</p>
+                <p className="text-zinc-600 text-sm mt-1">Reps are assigned to specific classes</p>
+              </div>
+            ) : (
+              classes.map((c) => {
+                const reps = repsForClass(c.id)
+                return (
+                  <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-orange-500/20 text-orange-400 w-10 h-10 rounded-xl flex items-center justify-center text-xs font-black">
+                          {c.code}
+                        </div>
+                        <div>
+                          <p className="text-white font-bold text-sm">{c.name}</p>
+                          <p className="text-zinc-500 text-xs">{c.code}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setAssignClassId(c.id)
+                          setShowAssignRep(true)
+                        }}
+                        className="text-orange-400 text-xs font-bold hover:text-orange-300"
+                      >
+                        + Add Rep
+                      </button>
+                    </div>
+
+                    {reps.length === 0 ? (
+                      <p className="text-zinc-600 text-xs py-2">No rep assigned yet</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {reps.map((r) => (
+                          <div key={r.id} className="flex items-center justify-between bg-zinc-800 rounded-xl px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-full bg-orange-500/20 text-orange-400 flex items-center justify-center text-xs font-black">
+                                {r.member.full_name.charAt(0)}
+                              </div>
+                              <div>
+                                <p className="text-white text-sm font-medium">{r.member.full_name}</p>
+                                {heroTitleOf(r.user_id) && (
+                                  <p className="text-orange-400 text-xs">{heroTitleOf(r.user_id)}</p>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => removeRep(r.id, r.user_id)}
+                              className="text-zinc-600 hover:text-red-400 text-sm transition-colors"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
+
+            {/* Assign Rep Modal */}
+            {showAssignRep && (
+              <div className="fixed inset-0 bg-black/80 flex items-end justify-center z-50 p-4">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+                  <h3 className="text-white font-bold text-lg mb-4">Assign Course Rep</h3>
+
+                  {repError && (
+                    <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3 mb-4">
+                      {repError}
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-zinc-400 text-xs mb-1 block">Class</label>
+                      <select
+                        value={assignClassId}
+                        onChange={(e) => setAssignClassId(e.target.value)}
+                        className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500"
+                      >
+                        <option value="">Select class</option>
+                        {classes.map((c) => (
+                          <option key={c.id} value={c.id}>{c.code} — {c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-zinc-400 text-xs mb-1 block">Select Student</label>
+                      <input
+                        value={memberSearch}
+                        onChange={(e) => setMemberSearch(e.target.value)}
+                        placeholder="Search by name..."
+                        className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500 mb-2"
+                      />
+                      <div className="max-h-48 overflow-y-auto space-y-1 bg-zinc-800/50 rounded-xl p-2">
+                        {members
+                          .filter(m => !['school_admin', 'super_admin'].includes(roleOf(m.id)))
+                          .filter(m => m.full_name.toLowerCase().includes(memberSearch.toLowerCase()))
+                          .map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => setAssignStudentId(m.id)}
+                              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition-colors ${
+                                assignStudentId === m.id
+                                  ? 'bg-orange-500/20 border border-orange-500/50'
+                                  : 'hover:bg-zinc-700'
+                              }`}
+                            >
+                              <div>
+                                <p className="text-white text-sm font-medium">{m.full_name}</p>
+                                <p className="text-zinc-500 text-xs capitalize">{roleOf(m.id).replace('_', ' ')}</p>
+                              </div>
+                              {assignStudentId === m.id && <span className="text-orange-400">✓</span>}
+                            </button>
+                          ))
+                        }
+                        {members.length === 0 && (
+                          <p className="text-zinc-600 text-xs text-center py-3">No students have joined yet</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-zinc-400 text-xs mb-1 block">
+                        Hero Title <span className="text-zinc-600">(optional)</span>
+                      </label>
+                      <input
+                        value={assignHeroTitle}
+                        onChange={(e) => setAssignHeroTitle(e.target.value)}
+                        placeholder="e.g. The Voice of Level 300"
+                        className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500"
+                      />
+                    </div>
+
+                    <div className="flex gap-3 pt-1">
+                      <button
+                        onClick={() => {
+                          setShowAssignRep(false)
+                          setAssignClassId('')
+                          setAssignStudentId('')
+                          setAssignHeroTitle('')
+                          setMemberSearch('')
+                          setRepError('')
+                        }}
+                        className="flex-1 bg-zinc-800 text-zinc-400 rounded-xl py-3 text-sm font-bold"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={assignRep}
+                        disabled={!assignClassId || !assignStudentId || savingRep}
+                        className="flex-1 bg-orange-500 hover:bg-orange-400 disabled:opacity-40 text-white rounded-xl py-3 text-sm font-bold"
+                      >
+                        {savingRep ? 'Assigning...' : '🔥 Assign Rep'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -609,7 +897,6 @@ export default function SchoolAdminPage() {
               </div>
             </div>
 
-            {/* WORKING Feature Toggles */}
             {toggles && (
               <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
                 <h3 className="text-white font-bold mb-4">Feature Toggles</h3>
@@ -640,9 +927,6 @@ export default function SchoolAdminPage() {
                     </div>
                   ))}
                 </div>
-                <p className="text-zinc-600 text-xs mt-4">
-                  Changes save instantly to the database
-                </p>
               </div>
             )}
           </div>
@@ -651,13 +935,14 @@ export default function SchoolAdminPage() {
       </div>
 
       {/* Bottom Nav */}
-      <div className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 px-6 py-3">
+      <div className="fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 px-4 py-3">
         <div className="flex justify-around max-w-md mx-auto">
           {[
             { icon: '🏠', label: 'Overview', tab: 'overview' },
             { icon: '🏢', label: 'Buildings', tab: 'buildings' },
             { icon: '📚', label: 'Depts', tab: 'departments' },
             { icon: '📖', label: 'Classes', tab: 'classes' },
+            { icon: '🦸', label: 'Reps', tab: 'reps' },
             { icon: '⚙️', label: 'Settings', tab: 'settings' },
           ].map((item) => (
             <button
