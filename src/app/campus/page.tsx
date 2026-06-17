@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
 import { useAuthStore } from '@/store/auth'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { playSound, playReactionSound } from '@/lib/sounds'
@@ -107,7 +107,15 @@ export default function CampusPage() {
   const channelRef = useRef<any>(null)
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
+    if (!loading && !user) {
+      // Wait a beat before redirecting — gives store time to hydrate
+      const timer = setTimeout(() => {
+        if (!useAuthStore.getState().user) {
+          router.push('/login')
+        }
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
   }, [user, loading])
 
   useEffect(() => {
