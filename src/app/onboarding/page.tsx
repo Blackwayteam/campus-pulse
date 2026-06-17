@@ -105,7 +105,7 @@ export default function OnboardingPage() {
 
     // Small delay so user sees the success screen
     setTimeout(() => {
-      router.push('/campus')
+    window.location.href = '/campus'
     }, 1500)
   }
 
