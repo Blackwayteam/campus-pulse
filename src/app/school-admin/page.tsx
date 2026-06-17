@@ -26,6 +26,9 @@ export default function SchoolAdminPage() {
   const [showAddDept, setShowAddDept] = useState(false)
   const [showAddClass, setShowAddClass] = useState(false)
   const [showAssignRep, setShowAssignRep] = useState(false)
+  const [showPromoteAdmin, setShowPromoteAdmin] = useState(false)
+  const [promoteSearch, setPromoteSearch] = useState('')
+  const [promoting, setPromoting] = useState(false)
 
   // Form states
   const [buildingName, setBuildingName] = useState('')
@@ -48,7 +51,15 @@ export default function SchoolAdminPage() {
   const [repError, setRepError] = useState('')
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
+    if (loading) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    const role = user.role?.role_type
+    if (role !== 'school_admin' && role !== 'super_admin') {
+      router.push('/campus')
+    }
   }, [user, loading])
 
   useEffect(() => {
@@ -281,6 +292,40 @@ export default function SchoolAdminPage() {
         .eq('role_type', 'course_rep')
     }
 
+    loadData()
+  }
+
+  async function promoteToAdmin(userId: string) {
+    setPromoting(true)
+    const existing = memberRoles.find((r) => r.user_id === userId)
+
+    if (existing) {
+      await supabase
+        .from('roles')
+        .update({ role_type: 'school_admin' })
+        .eq('user_id', userId)
+        .eq('school_id', user?.school?.id)
+    } else {
+      await supabase.from('roles').insert({
+        school_id: user?.school?.id,
+        user_id: userId,
+        role_type: 'school_admin',
+      })
+    }
+
+    setShowPromoteAdmin(false)
+    setPromoteSearch('')
+    setPromoting(false)
+    loadData()
+  }
+
+  async function demoteAdmin(userId: string) {
+    if (!confirm('Remove admin access from this person?')) return
+    await supabase
+      .from('roles')
+      .update({ role_type: 'student' })
+      .eq('user_id', userId)
+      .eq('school_id', user?.school?.id)
     loadData()
   }
 
@@ -699,6 +744,47 @@ export default function SchoolAdminPage() {
         {/* REPS — NEW */}
         {activeTab === 'reps' && (
           <div className="space-y-3">
+
+            {/* SCHOOL ADMINS SECTION */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-bold text-white flex items-center gap-2">
+                  <span>👑</span> School Admins
+                </h2>
+                <button
+                  onClick={() => setShowPromoteAdmin(true)}
+                  className="bg-purple-500 hover:bg-purple-400 text-white text-xs font-bold px-4 py-2 rounded-xl"
+                >
+                  + Promote Admin
+                </button>
+              </div>
+
+              {members.filter(m => roleOf(m.id) === 'school_admin').length === 0 ? (
+                <p className="text-zinc-600 text-xs py-2">Only you manage this school right now</p>
+              ) : (
+                <div className="space-y-2">
+                  {members.filter(m => roleOf(m.id) === 'school_admin').map((m) => (
+                    <div key={m.id} className="flex items-center justify-between bg-zinc-800 rounded-xl px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-xs font-black">
+                          {m.full_name.charAt(0)}
+                        </div>
+                        <p className="text-white text-sm font-medium">{m.full_name}</p>
+                      </div>
+                      {m.id !== user?.id && (
+                        <button
+                          onClick={() => demoteAdmin(m.id)}
+                          className="text-zinc-600 hover:text-red-400 text-xs font-bold transition-colors"
+                        >
+                          Demote
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center justify-between mb-2">
               <h2 className="font-bold text-white">Course Reps</h2>
               <button
@@ -872,6 +958,59 @@ export default function SchoolAdminPage() {
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Promote Admin Modal */}
+            {showPromoteAdmin && (
+              <div className="fixed inset-0 bg-black/80 flex items-end justify-center z-50 p-4">
+                <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+                  <h3 className="text-white font-bold text-lg mb-2">Promote to School Admin</h3>
+                  <p className="text-zinc-500 text-xs mb-4">
+                    School admins can manage buildings, classes, reps, and promote others.
+                  </p>
+
+                  <input
+                    value={promoteSearch}
+                    onChange={(e) => setPromoteSearch(e.target.value)}
+                    placeholder="Search by name..."
+                    className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500 mb-3"
+                  />
+
+                  <div className="max-h-64 overflow-y-auto space-y-1 bg-zinc-800/50 rounded-xl p-2 mb-4">
+                    {members
+                      .filter(m => roleOf(m.id) !== 'school_admin' && roleOf(m.id) !== 'super_admin')
+                      .filter(m => m.full_name.toLowerCase().includes(promoteSearch.toLowerCase()))
+                      .map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => promoteToAdmin(m.id)}
+                          disabled={promoting}
+                          className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-left hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                        >
+                          <div>
+                            <p className="text-white text-sm font-medium">{m.full_name}</p>
+                            <p className="text-zinc-500 text-xs capitalize">{roleOf(m.id).replace('_', ' ')}</p>
+                          </div>
+                          <span className="text-purple-400 text-xs font-bold">Promote →</span>
+                        </button>
+                      ))
+                    }
+                    {members.filter(m => roleOf(m.id) !== 'school_admin' && roleOf(m.id) !== 'super_admin').length === 0 && (
+                      <p className="text-zinc-600 text-xs text-center py-3">No eligible members found</p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setShowPromoteAdmin(false)
+                      setPromoteSearch('')
+                    }}
+                    className="w-full bg-zinc-800 text-zinc-400 rounded-xl py-3 text-sm font-bold"
+                  >
+                    Cancel
+                  </button>
                 </div>
               </div>
             )}
