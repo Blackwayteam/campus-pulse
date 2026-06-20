@@ -394,7 +394,22 @@ function broadcastFanfare(ctx: AudioContext, dest: AudioNode) {
 
 // ── AMBIENT LOOPS — tied to live building status on the map ──
 
-let activeLoops: Record<string, { source: AudioBufferSourceNode | OscillatorNode; gain: GainNode; extra?: any[] }> = {}
+let activeLoops: Record<string, { source: { stop: () => void }; gain: GainNode; extra?: any[] }> = {}
+let ambientBus: DynamicsCompressorNode | null = null
+
+// Shared compressor bus — prevents multiple ambient loops from clashing/distorting when stacked
+function getAmbientBus(ctx: AudioContext): DynamicsCompressorNode {
+  if (!ambientBus) {
+    ambientBus = ctx.createDynamicsCompressor()
+    ambientBus.threshold.value = -28
+    ambientBus.knee.value = 18
+    ambientBus.ratio.value = 5
+    ambientBus.attack.value = 0.01
+    ambientBus.release.value = 0.3
+    ambientBus.connect(ctx.destination)
+  }
+  return ambientBus
+}
 
 function stopLoop(key: string, fadeMs: number = 400) {
   const loop = activeLoops[key]
@@ -416,123 +431,137 @@ function stopAllLoops() {
   Object.keys(activeLoops).forEach(key => stopLoop(key, 300))
 }
 
-// 🔥 FIRE — deep rolling rumble + sparse sharp crackle pops (NOT hiss like rain)
-function startFireAmbient(volume: number = 0.5) {
+// 🔥 FIRE — warm low rumble + sparse soft pops. No hiss, no static character.
+function startFireAmbient(volume: number = 0.4) {
   const ctx = getCtx()
-  if (!ctx || activeLoops['fire']) return
+  if (!ctx || activeLoops['cancelled']) return
+  const bus = getAmbientBus(ctx)
 
-  // Rolling low rumble bed — gives fire its "roar"
   const rumbleSize = ctx.sampleRate * 2
   const rumbleBuf = ctx.createBuffer(1, rumbleSize, ctx.sampleRate)
   const rumbleData = rumbleBuf.getChannelData(0)
   let last = 0
   for (let i = 0; i < rumbleSize; i++) {
-    // smoothed/integrated noise = rumble, not hiss
     const white = Math.random() * 2 - 1
-    last = (last + white * 0.05)
-    rumbleData[i] = last
+    last = last * 0.97 + white * 0.03
+    rumbleData[i] = last * 3
   }
   const rumbleSource = ctx.createBufferSource()
   rumbleSource.buffer = rumbleBuf
   rumbleSource.loop = true
   const rumbleFilter = ctx.createBiquadFilter()
   rumbleFilter.type = 'lowpass'
-  rumbleFilter.frequency.value = 350
+  rumbleFilter.frequency.value = 200
   const gain = ctx.createGain()
   gain.gain.value = 0
-  rumbleSource.connect(rumbleFilter); rumbleFilter.connect(gain); gain.connect(ctx.destination)
-  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.6)
+  rumbleSource.connect(rumbleFilter); rumbleFilter.connect(gain); gain.connect(bus)
+  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.8)
   rumbleSource.start()
 
-  // Sparse sharp crackle pops scheduled on an interval — distinct "pop" character
+  // Sparse warm pops — slower, softer, more "ember" than "static crackle"
   const crackleInterval = setInterval(() => {
     if (!ctx || ctx.state === 'closed') return
-    const size = Math.floor(ctx.sampleRate * 0.025)
+    const size = Math.floor(ctx.sampleRate * 0.04)
     const buf = ctx.createBuffer(1, size, ctx.sampleRate)
     const d = buf.getChannelData(0)
     for (let i = 0; i < size; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / size)
     const src = ctx.createBufferSource()
     src.buffer = buf
     const filt = ctx.createBiquadFilter()
-    filt.type = 'highpass'
-    filt.frequency.value = 2500
+    filt.type = 'bandpass'
+    filt.frequency.value = 500 + Math.random() * 600
+    filt.Q.value = 1.2
     const g = ctx.createGain()
-    g.gain.value = volume * (0.6 + Math.random() * 0.6)
-    src.connect(filt); filt.connect(g); g.connect(ctx.destination)
+    g.gain.value = volume * (0.5 + Math.random() * 0.5)
+    src.connect(filt); filt.connect(g); g.connect(bus)
     src.start()
-    src.stop(ctx.currentTime + 0.03)
-  }, 180 + Math.random() * 140)
+    src.stop(ctx.currentTime + 0.05)
+  }, 300 + Math.random() * 350)
 
-  activeLoops['fire'] = {
+  activeLoops['cancelled'] = {
     source: rumbleSource,
     gain,
     extra: [{ stop: () => clearInterval(crackleInterval) }],
   }
 }
 
-// 🌧️ RAIN — pure high-frequency hiss, steady, no low end
-function startRainAmbient(volume: number = 0.32) {
+// 🌧️ RAIN — individual pattering droplets, not a continuous hiss
+function startRainAmbient(volume: number = 0.3) {
   const ctx = getCtx()
-  if (!ctx || activeLoops['rain']) return
+  if (!ctx || activeLoops['confirmed']) return
+  const bus = getAmbientBus(ctx)
 
-  const bufferSize = ctx.sampleRate * 2
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
-  const data = buffer.getChannelData(0)
-  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1
+  // Silent carrier so we have a "source" to stop on cleanup
+  const carrier = ctx.createOscillator()
+  carrier.frequency.value = 0
+  const masterGain = ctx.createGain()
+  masterGain.gain.value = 1
+  carrier.connect(masterGain); masterGain.connect(bus)
+  carrier.start()
 
-  const source = ctx.createBufferSource()
-  source.buffer = buffer
-  source.loop = true
-  const filter = ctx.createBiquadFilter()
-  filter.type = 'highpass'
-  filter.frequency.value = 3200
-  const gain = ctx.createGain()
-  gain.gain.value = 0
-  source.connect(filter); filter.connect(gain); gain.connect(ctx.destination)
-  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.6)
-  source.start()
+  const dropInterval = setInterval(() => {
+    if (!ctx || ctx.state === 'closed') return
+    const size = Math.floor(ctx.sampleRate * 0.012)
+    const buf = ctx.createBuffer(1, size, ctx.sampleRate)
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < size; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / size)
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const filt = ctx.createBiquadFilter()
+    filt.type = 'bandpass'
+    filt.frequency.value = 3000 + Math.random() * 3500
+    filt.Q.value = 2
+    const g = ctx.createGain()
+    g.gain.value = volume * (0.25 + Math.random() * 0.35)
+    src.connect(filt); filt.connect(g); g.connect(bus)
+    src.start()
+    src.stop(ctx.currentTime + 0.02)
+  }, 25 + Math.random() * 45)
 
-  activeLoops['rain'] = { source, gain }
+  activeLoops['confirmed'] = {
+    source: { stop: () => { try { carrier.stop() } catch (e) {} } },
+    gain: masterGain,
+    extra: [{ stop: () => clearInterval(dropInterval) }],
+  }
 }
 
 // ⏱️ DELAYED — slow rhythmic tick, like a clock counting down
-function startDelayedAmbient(volume: number = 0.3) {
+function startDelayedAmbient(volume: number = 0.25) {
   const ctx = getCtx()
   if (!ctx || activeLoops['delayed']) return
+  const bus = getAmbientBus(ctx)
 
-  const osc = ctx.createOscillator()
-  const gain = ctx.createGain()
-  osc.type = 'sine'
-  osc.frequency.value = 0.0001 // silent carrier, gain does the work via LFO below
+  const carrier = ctx.createOscillator()
+  carrier.frequency.value = 0
   const masterGain = ctx.createGain()
-  masterGain.gain.value = 0
-  osc.connect(gain); gain.connect(masterGain); masterGain.connect(ctx.destination)
-  masterGain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.3)
-  osc.start()
+  masterGain.gain.value = 1
+  carrier.connect(masterGain); masterGain.connect(bus)
+  carrier.start()
 
   const tickInterval = setInterval(() => {
     if (!ctx || ctx.state === 'closed') return
     const t = ctx.createOscillator()
     const g = ctx.createGain()
-    t.connect(g); g.connect(ctx.destination)
+    t.connect(g); g.connect(bus)
     t.type = 'square'
     t.frequency.value = 880
     g.gain.setValueAtTime(volume, ctx.currentTime)
     g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08)
     t.start(); t.stop(ctx.currentTime + 0.08)
-  }, 800)
+  }, 900)
 
   activeLoops['delayed'] = {
-    source: osc,
+    source: { stop: () => { try { carrier.stop() } catch (e) {} } },
     gain: masterGain,
     extra: [{ stop: () => clearInterval(tickInterval) }],
   }
 }
 
 // ⚠️ PENDING — slow ominous pulsing drone
-function startPendingAmbient(volume: number = 0.28) {
+function startPendingAmbient(volume: number = 0.22) {
   const ctx = getCtx()
   if (!ctx || activeLoops['pending']) return
+  const bus = getAmbientBus(ctx)
 
   const osc = ctx.createOscillator()
   const lfo = ctx.createOscillator()
@@ -542,30 +571,35 @@ function startPendingAmbient(volume: number = 0.28) {
   osc.type = 'sine'
   osc.frequency.value = 110
   lfo.frequency.value = 0.4
-  lfoGain.gain.value = 0.15
+  lfoGain.gain.value = 0.12
 
   lfo.connect(lfoGain)
   lfoGain.connect(gain.gain)
   osc.connect(gain)
-  gain.connect(ctx.destination)
+  gain.connect(bus)
 
   gain.gain.value = volume
   osc.start()
   lfo.start()
 
-  activeLoops['pending'] = { source: osc, gain, extra: [lfo] }
+  activeLoops['pending'] = {
+    source: { stop: () => { try { osc.stop() } catch (e) {} } },
+    gain,
+    extra: [lfo],
+  }
 }
 
 // 🚨 WARNING — fast urgent pulse, distinct from fire's rumble
-function startWarningAmbient(volume: number = 0.35) {
+function startWarningAmbient(volume: number = 0.28) {
   const ctx = getCtx()
   if (!ctx || activeLoops['warning']) return
+  const bus = getAmbientBus(ctx)
 
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = 'square'
   osc.frequency.value = 520
-  osc.connect(gain); gain.connect(ctx.destination)
+  osc.connect(gain); gain.connect(bus)
   gain.gain.value = 0
   osc.start()
 
@@ -577,31 +611,36 @@ function startWarningAmbient(volume: number = 0.35) {
   }, 350)
 
   activeLoops['warning'] = {
-    source: osc,
+    source: { stop: () => { try { osc.stop() } catch (e) {} } },
     gain,
     extra: [{ stop: () => clearInterval(pulseInterval) }],
   }
 }
 
 // 📣 BROADCAST — gentle shimmering hold
-function startBroadcastAmbient(volume: number = 0.25) {
+function startBroadcastAmbient(volume: number = 0.2) {
   const ctx = getCtx()
   if (!ctx || activeLoops['broadcast']) return
+  const bus = getAmbientBus(ctx)
 
   const osc1 = ctx.createOscillator()
   const osc2 = ctx.createOscillator()
   const gain = ctx.createGain()
   osc1.type = 'sine'; osc1.frequency.value = 440
-  osc2.type = 'sine'; osc2.frequency.value = 444 // slow beating shimmer
-  osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination)
+  osc2.type = 'sine'; osc2.frequency.value = 444
+  osc1.connect(gain); osc2.connect(gain); gain.connect(bus)
   gain.gain.value = 0
   gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.6)
   osc1.start(); osc2.start()
 
-  activeLoops['broadcast'] = { source: osc1, gain, extra: [osc2] }
+  activeLoops['broadcast'] = {
+    source: { stop: () => { try { osc1.stop() } catch (e) {} } },
+    gain,
+    extra: [osc2],
+  }
 }
 
-const AMBIENT_STARTERS: Record<string, (v?: number) => void> = {
+const AMBIENT_STARTERS: Record<string, () => void> = {
   cancelled: startFireAmbient,
   warning:   startWarningAmbient,
   confirmed: startRainAmbient,
@@ -610,8 +649,6 @@ const AMBIENT_STARTERS: Record<string, (v?: number) => void> = {
   broadcast: startBroadcastAmbient,
 }
 
-// Call with the set of statuses currently active on the map.
-// Starts loops for statuses present, stops loops for statuses no longer present.
 export function syncAmbientLoops(activeStatuses: Set<string>) {
   Object.keys(AMBIENT_STARTERS).forEach((status) => {
     const shouldPlay = activeStatuses.has(status)
