@@ -1,7 +1,7 @@
 let audioCtx: AudioContext | null = null
 
 export const VOLUME_FULL = 1.0
-export const VOLUME_AMBIENT = 0.22
+export const VOLUME_AMBIENT = 0.40
 
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -18,6 +18,13 @@ function getCtx(): AudioContext | null {
   } catch (e) {
     console.warn('AudioContext failed:', e)
     return null
+  }
+}
+
+export function resumeAudio() {
+  const ctx = getCtx()
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {})
   }
 }
 

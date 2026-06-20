@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useAuthStore } from '@/store/auth'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { playSound, playReactionSound, VOLUME_FULL, VOLUME_AMBIENT } from '@/lib/sounds'
+import { playSound, playReactionSound, resumeAudio, VOLUME_FULL, VOLUME_AMBIENT } from '@/lib/sounds'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface Building {
@@ -116,6 +116,15 @@ export default function CampusPage() {
   const [joiningClassId, setJoiningClassId] = useState<string | null>(null)
   const particleId = useRef(0)
   const [audioUnlocked, setAudioUnlocked] = useState(false)
+  useEffect(() => {
+    const handler = () => resumeAudio()
+    window.addEventListener('pointerdown', handler)
+    window.addEventListener('visibilitychange', handler)
+    return () => {
+      window.removeEventListener('pointerdown', handler)
+      window.removeEventListener('visibilitychange', handler)
+    }
+  }, [])
   const channelRef = useRef<any>(null)
   const enrolledRef = useRef<Set<string>>(new Set())
   const feedMapRef = useRef<Record<string, FeedItem>>({})
