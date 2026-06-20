@@ -117,7 +117,15 @@ export default function ControlRoomPage() {
   const channelRef = useRef<any>(null)
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
+    if (loading) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    const role = user.role?.role_type
+    if (role !== 'course_rep' && role !== 'super_admin') {
+      router.push('/campus')
+    }
   }, [user, loading])
 
   useEffect(() => {

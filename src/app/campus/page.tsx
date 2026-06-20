@@ -115,6 +115,7 @@ export default function CampusPage() {
   const [particles, setParticles] = useState<Particle[]>([])
   const [joiningClassId, setJoiningClassId] = useState<string | null>(null)
   const particleId = useRef(0)
+  const [audioUnlocked, setAudioUnlocked] = useState(false)
   const channelRef = useRef<any>(null)
   const enrolledRef = useRef<Set<string>>(new Set())
   const feedMapRef = useRef<Record<string, FeedItem>>({})
@@ -345,6 +346,27 @@ export default function CampusPage() {
           <div className="text-5xl mb-4 animate-pulse">🏫</div>
           <p className="text-orange-500 font-bold animate-pulse">Loading Campus...</p>
         </div>
+      </div>
+    )
+  }
+
+  if (!audioUnlocked) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-6">
+        <motion.button
+          onClick={() => {
+            // Plays a silent blip to unlock audio on this device
+            playSound('confirmed', 0.0001)
+            setAudioUnlocked(true)
+          }}
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-orange-500 text-white font-black px-8 py-5 rounded-2xl text-lg flex flex-col items-center gap-2"
+        >
+          <span className="text-3xl">🔊</span>
+          Tap to Enter Campus
+          <span className="text-xs font-normal opacity-80">Turns on live sound + alerts</span>
+        </motion.button>
       </div>
     )
   }

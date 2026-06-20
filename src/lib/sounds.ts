@@ -1,19 +1,30 @@
-let audioCtx: AudioContext | null = null
+
 
 export const VOLUME_FULL = 1.0
 export const VOLUME_AMBIENT = 0.22
 
+let audioCtx: AudioContext | null = null
+
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null
   try {
-    if (!audioCtx) {
-      const AC = window.AudioContext || (window as any).webkitAudioContext
-      if (!AC) return null
+    const AC = window.AudioContext || (window as any).webkitAudioContext
+    if (!AC) return null
+
+    // If context died or got closed, make a fresh one
+    if (!audioCtx || audioCtx.state === 'closed') {
       audioCtx = new AC()
     }
-    if (audioCtx.state === 'suspended') audioCtx.resume()
+
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {})
+    }
+
     return audioCtx
-  } catch (e) { return null }
+  } catch (e) {
+    console.warn('AudioContext failed:', e)
+    return null
+  }
 }
 
 function makeMaster(ctx: AudioContext, volume: number): GainNode {

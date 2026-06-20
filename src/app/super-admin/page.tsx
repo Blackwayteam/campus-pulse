@@ -44,7 +44,14 @@ export default function SuperAdminPage() {
   const [savingToggle, setSavingToggle] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!loading && !user) router.push('/login')
+    if (loading) return
+    if (!user) {
+      router.push('/login')
+      return
+    }
+    if (user.role?.role_type !== 'super_admin') {
+      router.push('/campus')
+    }
   }, [user, loading])
 
   useEffect(() => {
