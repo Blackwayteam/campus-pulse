@@ -90,7 +90,7 @@ const statusBorder: Record<string, string> = {
   warning:   'border-red-600',
 }
 
-const REACTIONS = ['🔥', '😂', '😭', '⚡', '☕', '🎉']
+const REACTIONS = ['🔥', '😂', '😭', '⚡', '☕', '🎉', '🔫']
 
 // Relevance: full volume for your own classes and school-wide broadcasts, quiet ambient for everything else
 function isRelevant(item: { target_type: string; target_id: string }, enrolled: Set<string>): boolean {
@@ -789,44 +789,72 @@ function BuildingBlock({
       }}
       animate={
         building.status === 'cancelled'
-          ? { x: [0, -3, 3, -2, 2, -1, 1, 0], transition: { repeat: Infinity, duration: 0.4 } }
+          ? { x: [0, -5, 5, -4, 4, -2, 2, 0], transition: { repeat: Infinity, duration: 0.35 } }
           : building.status === 'pending'
-          ? { scale: [1, 1.03, 1], transition: { repeat: Infinity, duration: 1.5 } }
+          ? { scale: [1, 1.04, 1], transition: { repeat: Infinity, duration: 1.4 } }
           : building.status === 'delayed'
-          ? { opacity: [1, 0.6, 1], transition: { repeat: Infinity, duration: 1.0 } }
+          ? { opacity: [1, 0.55, 1], transition: { repeat: Infinity, duration: 1.0 } }
           : { x: 0, scale: 1, opacity: 1 }
       }
     >
+      {/* CANCELLED — full burning overlay, three flames */}
       {building.status === 'cancelled' && (
-        <motion.div
-          className="absolute bottom-0 left-0 right-0 flex justify-center text-xl pointer-events-none"
-          animate={{ y: [0, -6, 0], scale: [1, 1.3, 1] }}
-          transition={{ repeat: Infinity, duration: 0.7, ease: 'easeInOut' }}
-        >
-          🔥
-        </motion.div>
+        <>
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: 'radial-gradient(circle, rgba(239,68,68,0.55), transparent 70%)' }}
+            animate={{ opacity: [0.4, 0.9, 0.4] }}
+            transition={{ repeat: Infinity, duration: 0.5 }}
+          />
+          <motion.div
+            className="absolute -bottom-1 left-1/4 text-2xl pointer-events-none"
+            animate={{ y: [0, -10, 0], scale: [1, 1.4, 1], rotate: [-5, 5, -5] }}
+            transition={{ repeat: Infinity, duration: 0.6, ease: 'easeInOut' }}
+          >🔥</motion.div>
+          <motion.div
+            className="absolute -bottom-1 right-1/4 text-xl pointer-events-none"
+            animate={{ y: [0, -8, 0], scale: [1, 1.3, 1], rotate: [5, -5, 5] }}
+            transition={{ repeat: Infinity, duration: 0.5, ease: 'easeInOut', delay: 0.1 }}
+          >🔥</motion.div>
+          <motion.div
+            className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-3xl pointer-events-none"
+            animate={{ y: [0, -12, 0], scale: [1, 1.35, 1] }}
+            transition={{ repeat: Infinity, duration: 0.55, ease: 'easeInOut', delay: 0.05 }}
+          >🔥</motion.div>
+        </>
       )}
 
+      {/* CONFIRMED — full rain overlay, falling droplets */}
       {building.status === 'confirmed' && (
-        <motion.div
-          className="absolute top-1 left-0 right-0 flex justify-center text-base pointer-events-none"
-          animate={{ y: [0, 8, 0], opacity: [0.6, 1, 0.6] }}
-          transition={{ repeat: Infinity, duration: 0.9 }}
-        >
-          🌧️
-        </motion.div>
+        <>
+          <motion.div
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: 'radial-gradient(circle, rgba(96,165,250,0.4), transparent 70%)' }}
+            animate={{ opacity: [0.3, 0.7, 0.3] }}
+            transition={{ repeat: Infinity, duration: 0.9 }}
+          />
+          {[0, 1, 2].map((i) => (
+            <motion.div
+              key={i}
+              className="absolute text-lg pointer-events-none"
+              style={{ left: `${20 + i * 30}%`, top: '0%' }}
+              animate={{ y: [0, 40, 0], opacity: [0, 1, 0] }}
+              transition={{ repeat: Infinity, duration: 1.1, delay: i * 0.25, ease: 'linear' }}
+            >💧</motion.div>
+          ))}
+        </>
       )}
 
+      {/* PENDING — warning pulse */}
       {building.status === 'pending' && (
         <motion.div
-          className="absolute top-1 right-1 text-sm pointer-events-none"
+          className="absolute top-1 right-1 text-base pointer-events-none"
           animate={{ opacity: [1, 0, 1] }}
           transition={{ repeat: Infinity, duration: 0.8 }}
-        >
-          ⚠️
-        </motion.div>
+        >⚠️</motion.div>
       )}
 
+      {/* Building name */}
       <p
         className="font-black text-center leading-tight z-10 drop-shadow-lg"
         style={{
@@ -837,18 +865,23 @@ function BuildingBlock({
         {building.short_name ?? building.name}
       </p>
 
+      {/* Status label badge — impossible to miss, always shows the word */}
       {isActive && (
-        <motion.div
-          className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full"
-          style={{ backgroundColor: getStatusColor(building.status) }}
-          animate={{ scale: [1, 1.5, 1], opacity: [1, 0.4, 1] }}
-          transition={{ repeat: Infinity, duration: 0.8 }}
-        />
+        <div
+          className="absolute -top-2 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-full text-[8px] font-black whitespace-nowrap z-20"
+          style={{ backgroundColor: getStatusColor(building.status), color: '#000' }}
+        >
+          {building.status === 'cancelled' && '🔥 BURNING'}
+          {building.status === 'confirmed' && '✅ ON'}
+          {building.status === 'delayed' && '⏱️ LATE'}
+          {building.status === 'pending' && '⚠️ WATCH'}
+          {building.status === 'warning' && '🚨 ALERT'}
+          {building.status === 'broadcast' && '📣 LIVE'}
+        </div>
       )}
     </motion.button>
   )
 }
-
 function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
     normal:    '#52525b',

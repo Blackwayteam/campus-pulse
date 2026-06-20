@@ -1,25 +1,19 @@
-
+let audioCtx: AudioContext | null = null
 
 export const VOLUME_FULL = 1.0
 export const VOLUME_AMBIENT = 0.22
-
-let audioCtx: AudioContext | null = null
 
 function getCtx(): AudioContext | null {
   if (typeof window === 'undefined') return null
   try {
     const AC = window.AudioContext || (window as any).webkitAudioContext
     if (!AC) return null
-
-    // If context died or got closed, make a fresh one
     if (!audioCtx || audioCtx.state === 'closed') {
       audioCtx = new AC()
     }
-
     if (audioCtx.state === 'suspended') {
       audioCtx.resume().catch(() => {})
     }
-
     return audioCtx
   } catch (e) {
     console.warn('AudioContext failed:', e)
@@ -62,11 +56,12 @@ export function playReactionSound(emoji: string, volume: number = VOLUME_FULL) {
       case '⚡': zapSound(ctx, dest); break
       case '☕': warmTone(ctx, dest); break
       case '🎉': popSound(ctx, dest); break
+      case '🔫': gunBurst(ctx, dest); break
     }
   } catch (e) { console.warn('Reaction sound error:', e) }
 }
 
-// 🔥 BUSUUSH BUUSH — Big explosion for cancelled announcements
+// 🔥 BIG EXPLOSION — for cancelled announcements (the whole-campus blast)
 function bigExplosion(ctx: AudioContext, dest: AudioNode) {
   const now = ctx.currentTime
   const bufferSize = Math.floor(ctx.sampleRate * 1.5)
@@ -133,48 +128,102 @@ function bigExplosion(ctx: AudioContext, dest: AudioNode) {
   }
 }
 
-// 🔥 FIRE REACTION — sharp crack + sub thump + metallic tail
-// Punchy single-shot character, built to retrigger cleanly on rapid clicks
+// 🔥 FIRE REACTION — roaring whoosh + crackle. Sounds like an actual flame, not a gunshot.
 function fireBlast(ctx: AudioContext, dest: AudioNode) {
   const now = ctx.currentTime
 
-  const crackSize = Math.floor(ctx.sampleRate * 0.05)
-  const crackBuf = ctx.createBuffer(1, crackSize, ctx.sampleRate)
-  const crackData = crackBuf.getChannelData(0)
-  for (let i = 0; i < crackSize; i++) {
-    const decay = 1 - i / crackSize
-    crackData[i] = (Math.random() * 2 - 1) * decay
+  const whooshSize = Math.floor(ctx.sampleRate * 0.45)
+  const whooshBuf = ctx.createBuffer(1, whooshSize, ctx.sampleRate)
+  const whooshData = whooshBuf.getChannelData(0)
+  for (let i = 0; i < whooshSize; i++) whooshData[i] = Math.random() * 2 - 1
+  const whoosh = ctx.createBufferSource()
+  whoosh.buffer = whooshBuf
+  const whooshFilter = ctx.createBiquadFilter()
+  whooshFilter.type = 'bandpass'
+  whooshFilter.Q.value = 0.9
+  whooshFilter.frequency.setValueAtTime(300, now)
+  whooshFilter.frequency.exponentialRampToValueAtTime(2200, now + 0.18)
+  whooshFilter.frequency.exponentialRampToValueAtTime(600, now + 0.4)
+  const whooshGain = ctx.createGain()
+  whoosh.connect(whooshFilter); whooshFilter.connect(whooshGain); whooshGain.connect(dest)
+  whooshGain.gain.setValueAtTime(0.001, now)
+  whooshGain.gain.linearRampToValueAtTime(2.6, now + 0.05)
+  whooshGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45)
+  whoosh.start(now); whoosh.stop(now + 0.45)
+
+  const rumble = ctx.createOscillator()
+  const rumbleGain = ctx.createGain()
+  rumble.connect(rumbleGain); rumbleGain.connect(dest)
+  rumble.type = 'sine'
+  rumble.frequency.setValueAtTime(85, now)
+  rumble.frequency.exponentialRampToValueAtTime(40, now + 0.4)
+  rumbleGain.gain.setValueAtTime(1.8, now)
+  rumbleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4)
+  rumble.start(now); rumble.stop(now + 0.4)
+
+  for (let i = 0; i < 6; i++) {
+    const size = Math.floor(ctx.sampleRate * 0.03)
+    const buffer = ctx.createBuffer(1, size, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let j = 0; j < size; j++) data[j] = Math.random() * 2 - 1
+    const crackle = ctx.createBufferSource()
+    crackle.buffer = buffer
+    const cFilter = ctx.createBiquadFilter()
+    cFilter.type = 'bandpass'
+    cFilter.frequency.value = 1000 + Math.random() * 2500
+    const cGain = ctx.createGain()
+    crackle.connect(cFilter); cFilter.connect(cGain); cGain.connect(dest)
+    const t = now + 0.04 + Math.random() * 0.38
+    cGain.gain.setValueAtTime(0.8 + Math.random() * 0.6, t)
+    cGain.gain.exponentialRampToValueAtTime(0.001, t + 0.04)
+    crackle.start(t); crackle.stop(t + 0.05)
   }
-  const crack = ctx.createBufferSource()
-  crack.buffer = crackBuf
-  const crackFilter = ctx.createBiquadFilter()
-  crackFilter.type = 'highpass'
-  crackFilter.frequency.value = 900
-  const crackGain = ctx.createGain()
-  crack.connect(crackFilter); crackFilter.connect(crackGain); crackGain.connect(dest)
-  crackGain.gain.setValueAtTime(3.2, now)
-  crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.045)
-  crack.start(now); crack.stop(now + 0.05)
+}
 
-  const thump = ctx.createOscillator()
-  const thumpGain = ctx.createGain()
-  thump.connect(thumpGain); thumpGain.connect(dest)
-  thump.type = 'sine'
-  thump.frequency.setValueAtTime(150, now)
-  thump.frequency.exponentialRampToValueAtTime(38, now + 0.09)
-  thumpGain.gain.setValueAtTime(2.2, now)
-  thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1)
-  thump.start(now); thump.stop(now + 0.1)
+// 🔫 GUN BURST — Terminator-style three-round burst, sharp and mechanical
+function gunBurst(ctx: AudioContext, dest: AudioNode) {
+  const now = ctx.currentTime
+  const shots = 3
+  for (let i = 0; i < shots; i++) {
+    const t = now + i * 0.07
+    const size = Math.floor(ctx.sampleRate * 0.04)
+    const buffer = ctx.createBuffer(1, size, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let j = 0; j < size; j++) {
+      const decay = 1 - j / size
+      data[j] = (Math.random() * 2 - 1) * decay
+    }
+    const noise = ctx.createBufferSource()
+    noise.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = 1400 + Math.random() * 400
+    filter.Q.value = 0.7
+    const gain = ctx.createGain()
+    noise.connect(filter); filter.connect(gain); gain.connect(dest)
+    gain.gain.setValueAtTime(3.0 - i * 0.4, t)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.035)
+    noise.start(t); noise.stop(t + 0.04)
 
-  const ring = ctx.createOscillator()
-  const ringGain = ctx.createGain()
-  ring.connect(ringGain); ringGain.connect(dest)
-  ring.type = 'triangle'
-  ring.frequency.value = 1800
-  ringGain.gain.setValueAtTime(0.001, now + 0.02)
-  ringGain.gain.linearRampToValueAtTime(0.5, now + 0.03)
-  ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18)
-  ring.start(now + 0.02); ring.stop(now + 0.18)
+    const click = ctx.createOscillator()
+    const clickGain = ctx.createGain()
+    click.connect(clickGain); clickGain.connect(dest)
+    click.type = 'square'
+    click.frequency.value = 2200
+    clickGain.gain.setValueAtTime(0.5, t)
+    clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.02)
+    click.start(t); click.stop(t + 0.02)
+
+    const thump = ctx.createOscillator()
+    const thumpGain = ctx.createGain()
+    thump.connect(thumpGain); thumpGain.connect(dest)
+    thump.type = 'sine'
+    thump.frequency.setValueAtTime(110, t)
+    thump.frequency.exponentialRampToValueAtTime(45, t + 0.05)
+    thumpGain.gain.setValueAtTime(1.4, t)
+    thumpGain.gain.exponentialRampToValueAtTime(0.001, t + 0.05)
+    thump.start(t); thump.stop(t + 0.05)
+  }
 }
 
 function laughSound(ctx: AudioContext, dest: AudioNode) {
