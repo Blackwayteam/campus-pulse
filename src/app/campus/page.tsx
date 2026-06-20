@@ -6,8 +6,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   playSound, playReactionSound, resumeAudio,
-  startFireAmbient, stopFireAmbient,
-  startRainAmbient, stopRainAmbient,
+  syncAmbientLoops, stopAllAmbient,
   VOLUME_FULL, VOLUME_AMBIENT
 } from '@/lib/sounds'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -131,33 +130,23 @@ export default function CampusPage() {
     }
   }, [])
 
-  // Ambient sound tied to what's actually burning/raining on the map right now
+  // Ambient sound tied to whatever statuses are actually live on the map right now
   useEffect(() => {
     if (tab !== 'map' || !audioUnlocked) {
-      stopFireAmbient()
-      stopRainAmbient()
+      stopAllAmbient()
       return
     }
 
-    const anyCancelled = buildings.some(b => b.status === 'cancelled' || b.status === 'warning')
-    const anyConfirmed = buildings.some(b => b.status === 'confirmed')
-
-    if (anyCancelled) startFireAmbient(0.5)
-    else stopFireAmbient()
-
-    if (anyConfirmed) startRainAmbient(0.35)
-    else stopRainAmbient()
-
-    return () => {
-      // cleanup happens naturally on next effect run or unmount below
-    }
+    const activeStatuses = new Set(
+      buildings.map(b => b.status).filter(s => s !== 'normal')
+    )
+    syncAmbientLoops(activeStatuses)
   }, [buildings, tab, audioUnlocked])
 
   // Stop all ambient sound when leaving the page entirely
   useEffect(() => {
     return () => {
-      stopFireAmbient()
-      stopRainAmbient()
+      stopAllAmbient()
     }
   }, [])
   
