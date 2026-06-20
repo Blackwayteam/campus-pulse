@@ -4,7 +4,12 @@ import { useEffect, useState, useRef } from 'react'
 import { useAuthStore } from '@/store/auth'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { playSound, playReactionSound, resumeAudio, VOLUME_FULL, VOLUME_AMBIENT } from '@/lib/sounds'
+import {
+  playSound, playReactionSound, resumeAudio,
+  startFireAmbient, stopFireAmbient,
+  startRainAmbient, stopRainAmbient,
+  VOLUME_FULL, VOLUME_AMBIENT
+} from '@/lib/sounds'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface Building {
@@ -125,6 +130,37 @@ export default function CampusPage() {
       window.removeEventListener('visibilitychange', handler)
     }
   }, [])
+
+  // Ambient sound tied to what's actually burning/raining on the map right now
+  useEffect(() => {
+    if (tab !== 'map' || !audioUnlocked) {
+      stopFireAmbient()
+      stopRainAmbient()
+      return
+    }
+
+    const anyCancelled = buildings.some(b => b.status === 'cancelled' || b.status === 'warning')
+    const anyConfirmed = buildings.some(b => b.status === 'confirmed')
+
+    if (anyCancelled) startFireAmbient(0.5)
+    else stopFireAmbient()
+
+    if (anyConfirmed) startRainAmbient(0.35)
+    else stopRainAmbient()
+
+    return () => {
+      // cleanup happens naturally on next effect run or unmount below
+    }
+  }, [buildings, tab, audioUnlocked])
+
+  // Stop all ambient sound when leaving the page entirely
+  useEffect(() => {
+    return () => {
+      stopFireAmbient()
+      stopRainAmbient()
+    }
+  }, [])
+  
   const channelRef = useRef<any>(null)
   const enrolledRef = useRef<Set<string>>(new Set())
   const feedMapRef = useRef<Record<string, FeedItem>>({})

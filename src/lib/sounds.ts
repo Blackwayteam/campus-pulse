@@ -390,3 +390,100 @@ function broadcastFanfare(ctx: AudioContext, dest: AudioNode) {
     osc.start(t); osc.stop(t + 0.35)
   })
 }
+
+
+// ── AMBIENT LOOPS — tied to live building status on the map ──
+
+let fireLoopSource: AudioBufferSourceNode | null = null
+let fireLoopGain: GainNode | null = null
+let rainLoopSource: AudioBufferSourceNode | null = null
+let rainLoopGain: GainNode | null = null
+
+export function startFireAmbient(volume: number = 0.5) {
+  const ctx = getCtx()
+  if (!ctx || fireLoopSource) return // already playing
+
+  const bufferSize = ctx.sampleRate * 2
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < bufferSize; i++) {
+    // layered crackle texture — random spikes over a noise bed
+    data[i] = (Math.random() * 2 - 1) * 0.4 + (Math.random() < 0.002 ? (Math.random() * 2 - 1) * 1.5 : 0)
+  }
+
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.loop = true
+
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'bandpass'
+  filter.frequency.value = 1400
+  filter.Q.value = 0.6
+
+  const lowend = ctx.createBiquadFilter()
+  lowend.type = 'lowshelf'
+  lowend.frequency.value = 200
+  lowend.gain.value = 8
+
+  const gain = ctx.createGain()
+  gain.gain.value = 0
+  source.connect(filter); filter.connect(lowend); lowend.connect(gain); gain.connect(ctx.destination)
+  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.6)
+
+  source.start()
+  fireLoopSource = source
+  fireLoopGain = gain
+}
+
+export function stopFireAmbient() {
+  if (fireLoopGain && audioCtx) {
+    fireLoopGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4)
+  }
+  const src = fireLoopSource
+  setTimeout(() => {
+    try { src?.stop() } catch (e) {}
+  }, 450)
+  fireLoopSource = null
+  fireLoopGain = null
+}
+
+export function startRainAmbient(volume: number = 0.35) {
+  const ctx = getCtx()
+  if (!ctx || rainLoopSource) return
+
+  const bufferSize = ctx.sampleRate * 2
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate)
+  const data = buffer.getChannelData(0)
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1
+  }
+
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.loop = true
+
+  const filter = ctx.createBiquadFilter()
+  filter.type = 'highpass'
+  filter.frequency.value = 2500
+
+  const gain = ctx.createGain()
+  gain.gain.value = 0
+  source.connect(filter); filter.connect(gain); gain.connect(ctx.destination)
+  gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + 0.6)
+
+  source.start()
+  rainLoopSource = source
+  rainLoopGain = gain
+}
+
+export function stopRainAmbient() {
+  if (rainLoopGain && audioCtx) {
+    rainLoopGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.4)
+  }
+  const src = rainLoopSource
+  setTimeout(() => {
+    try { src?.stop() } catch (e) {}
+  }, 450)
+  rainLoopSource = null
+  rainLoopGain = null
+}
