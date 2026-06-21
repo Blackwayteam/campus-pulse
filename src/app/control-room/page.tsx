@@ -234,6 +234,18 @@ export default function ControlRoomPage() {
     })
 
     if (!error) {
+      fetch('/api/send-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: user?.school?.id,
+          target_type: 'class',
+          target_id: selectedClass.class_id,
+          status: activeStatus,
+          message: message || null,
+        }),
+      }).catch((e) => console.warn('Push notification failed:', e))
+
       setPosted(true)
       setMessage('')
       setActiveStatus(null)

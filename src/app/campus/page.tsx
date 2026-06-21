@@ -9,6 +9,7 @@ import {
   syncAmbientLoops, stopAllAmbient,
   VOLUME_FULL, VOLUME_AMBIENT
 } from '@/lib/sounds'
+import { enablePushNotifications, getNotificationPermissionStatus } from '@/lib/push'
 import { motion, AnimatePresence } from 'framer-motion'
 
 interface Building {
@@ -130,6 +131,22 @@ export default function CampusPage() {
     }
   }, [])
 
+  useEffect(() => {
+    getNotificationPermissionStatus().then(setNotifPermission)
+  }, [])
+
+  async function handleEnableNotifications() {
+    if (!user?.id) return
+    setEnablingNotifs(true)
+    const result = await enablePushNotifications(user.id)
+    if (result.success) {
+      setNotifPermission('granted')
+    } else {
+      alert(result.error || 'Could not enable notifications')
+    }
+    setEnablingNotifs(false)
+  }
+
   // Ambient sound tied to whatever statuses are actually live on the map right now
   useEffect(() => {
     if (tab !== 'map' || !audioUnlocked) {
@@ -151,6 +168,8 @@ export default function CampusPage() {
   }, [])
   
   const channelRef = useRef<any>(null)
+const [notifPermission, setNotifPermission] = useState<string>('default')
+const [enablingNotifs, setEnablingNotifs] = useState(false)
   const enrolledRef = useRef<Set<string>>(new Set())
   const feedMapRef = useRef<Record<string, FeedItem>>({})
 
@@ -489,6 +508,22 @@ export default function CampusPage() {
           </button>
         </div>
       </div>
+      {/* Enable notifications nudge */}
+      {notifPermission !== 'granted' && notifPermission !== 'unsupported' && (
+        <button
+          onClick={handleEnableNotifications}
+          disabled={enablingNotifs}
+          className="mx-4 mt-3 bg-blue-500/15 border border-blue-500/40 rounded-xl px-4 py-3 text-left flex items-center gap-3 disabled:opacity-60"
+        >
+          <span className="text-xl">🔔</span>
+          <div>
+            <p className="text-blue-300 text-sm font-bold">
+              {enablingNotifs ? 'Enabling...' : 'Turn on notifications'}
+            </p>
+            <p className="text-blue-400/70 text-xs">Get alerted even when the app is closed</p>
+          </div>
+        </button>
+      )}
 
       {/* Join classes nudge */}
       {enrolledClassIds.size === 0 && tab !== 'classes' && (
